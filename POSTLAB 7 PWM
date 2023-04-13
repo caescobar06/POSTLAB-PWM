@@ -1,0 +1,168 @@
+#pragma config FOSC = INTRC_NOCLKOUT// Oscillator Selection bits (INTOSCIO oscillator: I/O function on RA6/OSC2/CLKOUT pin, I/O function on RA7/OSC1/CLKIN)
+#pragma config WDTE = OFF       // Watchdog Timer Enable bit (WDT disabled and can be enabled by SWDTEN bit of the WDTCON register)
+#pragma config PWRTE = OFF      // Power-up Timer Enable bit (PWRT disabled)
+#pragma config MCLRE = OFF      // RE3/MCLR pin function select bit (RE3/MCLR pin function is digital input, MCLR internally tied to VDD)
+#pragma config CP = OFF         // Code Protection bit (Program memory code protection is disabled)
+#pragma config CPD = OFF        // Data Code Protection bit (Data memory code protection is disabled)
+#pragma config BOREN = OFF      // Brown Out Reset Selection bits (BOR disabled)
+#pragma config IESO = OFF       // Internal External Switchover bit (Internal/External Switchover mode is disabled)
+#pragma config FCMEN = OFF      // Fail-Safe Clock Monitor Enabled bit (Fail-Safe Clock Monitor is disabled)
+#pragma config LVP = OFF        // Low Voltage Programming Enable bit (RB3 pin has digital I/O, HV on MCLR must be used for programming)
+// CONFIG2
+#pragma config BOR4V = BOR40V   // Brown-out Reset Selection bit (Brown-out Reset set to 4.0V)
+#pragma config WRT = OFF        // Flash Program Memory Self Write Enable bits (Write protection off)
+
+#include <xc.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include "add.h"
+
+#define _XTAL_FREQ 8000000 //Frecuencia de oscilación del pic
+
+int flags; //BANDERA PARA DETERMIANR QUE CANAL SE USARÁ
+uint8_t contador, pot_3;//Variable de 8 bits
+char puerto = 'PORTEbits.RE0';
+
+void __interrupt() isr(void) //INTERRUPCIONES 
+{
+    if(PIR1bits.ADIF == 1) //indica el turno de cada canal para salida, INTERRUPCIÓN DE A/D
+    {
+        if (flags == 1) //PREGUNTA SI EL CANAL ELEGIDO ES EL NO 1
+        {
+            //CCPR1L = 0; //LOGRAR QUE SE COLOQUE EN 90 GRADOS EL SERVOMOTOR
+            CCPR1L = (ADRESH >> 1) + 124; //ENVÍA EL VALOR DEL POTENCIÓMETRO 1, Desplaza a la derecha un bit, se le suma el valor de 124 para
+            //ajustar el resultado al rango de valores permitidos en el registro CCPR1L 
+        }
+        else if (flags == 0)  // PREGUNTA SI EL CANAL ELEGIDO ES EL NO 2
+        {
+            CCPR2L = (ADRESH >> 1) + 124; //ENVÍA EL VALOR DEL POTENCIÓMETRO 2
+        }
+        else if (flags == 2)
+        {
+            pot_3 = ADRESH;
+        }
+        PIR1bits.ADIF = 0; //RESETEA LA BANDERA DE LAS INTERRUPCIONES DEL A/D
+    }
+    
+    if (T0IF){ //SI LA BANDERA DE INTERRUPCIONES DEL TIMER 0 ESTÁ ENCENDIDA 
+        contador++;
+        if (contador < pot_3)
+        {
+            PORTEbits.RE0 =1;//ENCIENDE EL VALOR DE SER CONTRARIO
+        }
+        else{
+            PORTEbits.RE0 =0;//APAGA EL VALOR DE SER CONTRARIO
+        }
+        TMR0 = 6; 
+        INTCONbits.T0IF = 0;//REINICIA LA BANDERA
+    }
+    
+}//FIN DE LAS INTERRUPCIONES
+
+void setup(void){
+ANSEL = 0b00000111; //LAS PRIMERAS DOS ENTRADAS COMO ANALÓGICAS
+    ANSELH = 0x00; //DESACTIVA LAS ENTRADAS ANALÓGICAS DEL PIN RA4 AL RA7   
+    
+    TRISA = 0b00000111; //PRIMEROS DOS PINES DEL PUERTO A COMO ENTRADAS
+    TRISC = 0x00; // SALIDAS DEL PUERTO C
+    TRISD = 0x00;
+    TRISE = 0x00;
+    
+    PORTA = 0x00; //LIMPIEZA DEL PUERTO A
+    PORTC =0x00; // LIMPIEZA DEL PUERTO C
+    PORTD = 0X00;
+    PORTE = 0x00;
+    
+    // CONFIGURACIÓN DE ADC
+    ADCON1bits.ADFM = 0; //justificado a la izquierda 
+    ADCON1bits.VCFG0 = 0; //voltajes de 0 a 5 V
+    ADCON1bits.VCFG1 = 0;
+    ADCON0bits.ADCS = 0b10; //Fosc/32
+    ADCON0bits.CHS = 0;//canal 0
+    __delay_us(50);
+    ADCON0bits.ADON = 1; //activación del módulo ADc
+    //FIN DE LA CONFIGURACIÓN DEL ADC
+    
+    //configuración del PWM
+    TRISCbits.TRISC2 = 1; //RC2 CCP1 como entrada
+    TRISDbits.TRISD5 = 1; //RC2 CCP1 com entrada
+
+    PR2 = 255; //valor del PWM Para una frecuencia máximca
+    
+    CCP1CONbits.P1M = 0; //CONFIGURA EL CANAL CCP1 COMO PWM 
+    CCP1CONbits.CCP1M = 0b1100; // MODO DE OPERACIÓN COMO PWM
+    CCPR1L = 0x0f; // VALOR INICIAL DEL CCP1
+    
+    CCP2CONbits.CCP2M = 0; //CONFIGURA EL CANAL CCP2 COMO PWM
+    CCP2CONbits.CCP2M = 0b1100; // MODO DE OPERACIÓN COMO PWM
+    CCPR1L = 0x0f; //ESTABLECE EL VALOR INICIAL DEL CICLO DE TRABAJO DEL CANAL CCP1
+    CCPR2L = 0x0f; //ESTABLECE EL VALOR INICIAL DEL CICLO DE TRABAJO DEL CANAL CCP2
+    
+    CCP1CONbits.DC1B = 0; //VALOR INICIAL DEL BIT MENOS SIGNIFICATIVO DEL CANAL CCP1
+    CCP2CONbits.DC2B0 = 0; //VALOR INICIAL DEL BIT MENOS SIGNFICATIVO DEL CANAL CCP2
+    CCP2CONbits.DC2B1 = 0; // VALOR INICIAL DEL SEGUNDO BIT SIGNIFICATIVO DEL CANAL CCP2
+    
+    //CONFIGURACIÓN DEL TIMER 2
+    PIR1bits.TMR2IF = 0; //bandera en 0
+    T2CONbits.T2CKPS = 0b11; //1:16 prescaler
+    T2CONbits.TMR2ON = 1;//se enciende el timer 2
+    while(PIR1bits.TMR2IF == 0); //primer ciclo del timer 2
+    PIR1bits.TMR2IF = 0;// se limpia la bandera del timer 2
+    TRISCbits.TRISC2 = 0; // salida del PWM
+    TRISDbits.TRISD5 = 0; //salida del PWM
+    //FIN DE LA CONFIGURACIÓN DEL TIMER 2
+    
+    //CONFIGURACIÓN DEL TIMER 0
+    OPTION_REGbits.T0CS = 0; //USO DEL RELOJ INTERNO
+    OPTION_REGbits.T0SE = 1; //TRANSICIÓN ALTO A BAJO  
+    OPTION_REGbits.PSA = 0; //PRESCALER ASIGNADO AL TIMER 0
+    OPTION_REGbits.PS = 0b011; // 1:16
+    TMR0 = 6; // Carga el valor al timer 0
+    
+    INTCONbits.T0IF = 0; //BANDERA EN 0
+    INTCONbits.T0IE = 1; //HABILITA LA INTERRUPCIÓN DEL TIMER 0
+    //FIN DE LA CONFIGURACIÓN DEL TIMER 0
+    
+    
+    //CONFGURACIÓN DEL OSCILADOR
+    OSCCONbits.IRCF = 0b0111; // oscilador a 8mHZ
+    OSCCONbits.SCS = 1; //se usa el reloj interno
+    //FIN DE LA CONFIGURACIÓN DEL OSCILADOR
+    
+    //CONFIGURACIÓN DE LAS INTERRUPCIONES
+    PIR1bits.ADIF = 0;// LIMPIA LA BANDERA A/D
+    PIE1bits.ADIE = 1; // HABILITA LAS INTERRUPCIONES PERIFÉRICAS DEL ADC
+    INTCONbits.PEIE = 1; //HABILITA TODAS LAS INTERRUPCIONES PERIFÉRICAS
+    INTCONbits.GIE = 1; // HABILITA LAS INTERRUPCIONES GLOBALES
+    ADCON0bits.GO = 1; // REALIZA LA CONVERSIÓN DEL ADC
+    //FIN DE LA CONFIGURACIÓN DE LAS INTERRUPCIONES
+    
+    flags = 1;
+    return;
+}
+
+void main(void){
+    setup(); //LLAMADA A LA RUTINA DE CONFIGURACIÓN
+    while (1)
+    {
+        if (ADCON0bits.CHS == 0) //SI SE ENCUENTRA EL PRIMER CANAL
+        {
+            flags = 0; //COLOCAR LA BANDERA EN 0
+            ADCON0bits.CHS = 1; //CAMBIAR AL SEGUNDO CANAL
+        }
+        else if (ADCON0bits.CHS == 1) // SI SE ENCUENTRA EN EL SEGUNDO CANAL
+        {
+            flags = 1; //COLOCAR LA BANDERA EN 1
+            ADCON0bits.CHS = 2; //CAMBIAR AL TERCER
+        }
+        else if(ADCON0bits.CHS == 2)
+        {
+            flags = 2;
+            ADCON0bits.CHS = 0; //CAMBIAR AL PRIMER CANAL
+        }
+        
+        __delay_us(50); // ESPERAR UN PEQUEÑO DELAY PARA EVITAR QUE LOS CANALES SE MEZCLEN
+        ADCON0bits.GO = 1; //REALIZA LA CONVERSIÓN DEL ADC
+    }
+    return;
+}
